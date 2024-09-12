@@ -4,8 +4,7 @@ from src.kernel_reflection import evaluate_kernel_on_validation
 
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-openai.api_key = "sk-WxdwNp1ekM9Em2bEKg5UiE9AaxcJlbmona2m5NINC3T3BlbkFJz4CEyfjhzUG33A7Ucxv7okXvB6MG40DEwGXg58jeUA"
-
+openai.api_key = "yourAPIKey"
 
 
 def calculate_quantiles(X_train, y_train):
