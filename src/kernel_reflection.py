@@ -11,8 +11,9 @@ def evaluate_kernel_on_validation(kernel_code, X_train, y_train, X_test, y_test)
 
         # Check if the cleaned code contains a valid Python function definition
         if 'def gp_kernel_function' not in cleaned_code:
-            raise ValueError("The generated kernel code does not contain a valid function definition.")
-
+            raise ValueError("The generated kernel code does "
+                             "not contain a valid function definition.")
+        check_code_safety(cleaned_code)
         # Execute the cleaned code
         exec(cleaned_code, globals())
 
@@ -21,24 +22,40 @@ def evaluate_kernel_on_validation(kernel_code, X_train, y_train, X_test, y_test)
 
         # Initialize the GP with the generated kernel
         kernel = gp_kernel_function()  # Use the generated kernel
-        gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=100)
+        gp_model = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
 
         # Fit the GP model
         gp_model.fit(X_train, y_train)
 
         # Predict on the test/validation data
         y_pred, y_std = gp_model.predict(X_test, return_std=True)
+        val = gp_model.log_marginal_likelihood()
+        print("The marginal is:", val)
 
-        # Calculate the error (e.g., Mean Squared Error)
-        mse = np.mean((y_pred - y_test) ** 2)
-        print(f"Validation MSE: {mse}")
-
-        # If MSE is acceptable, return None (no error)
-        if mse < 0.01:  # You can adjust the acceptable threshold
-            return None, mse, y_pred, y_std
-        else:
-            return f"High MSE: {mse}. Please refine the kernel.", mse, y_pred, y_std
+        return "High Validation Val: {lml}. Please refine the kernel", val, y_pred, y_std
 
     except Exception as e:
         error_message = str(e) + "\n" + traceback.format_exc()
-        return error_message, None, None, None  # Return None for mse, y_pred, and y_std
+        return error_message, None, None, None  # Return None for val, y_pred, and y_std
+
+def check_code_safety(code: str):
+    """Checks code for unsafe commands such as 'rm' or 'mv' and others that can compromise data on the machine."""
+    pattern_list = [
+        "rm ",
+        "mv ",
+        "cp ",
+        "chmod",
+        "sudo",
+        "mkdir",
+        "wget",
+        "curl",
+        "zip",
+        "unzip",
+        "pip",
+        "conda",
+        "rmdir",
+        "apt-get",
+    ]
+    for pattern in pattern_list:
+        if ("os.system" in code or "sp.Popen" in code) and pattern in code:
+            raise ValueError(f"Unsafe command '{pattern}' found in code! Aborting.")

@@ -46,12 +46,15 @@ def generate_kernel_with_feedback(trial_history, quantiles, error_message=None):
         "for a Gaussian Process kernel function "
         "named `gp_kernel_function` using scikit-learn. "
         "The kernel should be designed "
-        "for piece wise functions with jumps. Seems very discrete "
-        "Tune the hyperparameters for optimal performance. "
-        "Make sure the kernel is simple. We don't want to combine more than one or two "
-        "kernels since we will overfit"
+        "for a smooth function. Your lengthscale parameters should be small"
+        "not so big. Big values are not good!"
+        "Make sure the kernel is simple. We don't want to "
+        "combine much kernels "
+        "we will overfit"
         "Return only the Python code for the kernel function."
-        "Do not create a Gaussian process. Just return the code for the kernel function. You should return a kernel"
+        "Do not create a Gaussian process. "
+        "Just return the code for the kernel function. "
+        "You should return a kernel"
     )
 
     # Add trial history to the prompt
@@ -60,8 +63,10 @@ def generate_kernel_with_feedback(trial_history, quantiles, error_message=None):
         for idx, trial in enumerate(trial_history):
             history_text += (
                 f"Trial {idx + 1}: Kernel Code:\n{trial['kernel_code']}\n"
-                f"Validation Error (MSE): {trial['mse']:.5f}\n\n"
-                f"Make an internal plan on how to improve this. Remember oru function is discrete with jumps"
+                f"Log likelihood Marginal is: {trial['val']:.5f}\n\n"
+                f"Make an internal plan on how to improve this. Remember our function "
+                f"is periodic. We don't very complex kernels, it can hurt our "
+                f"overfitting"
                 f"Just return the code nothing else. Do not add any explanations. "
                 f"Just return the code for the kernel function. Nothing else is needed"
             )
@@ -81,22 +86,25 @@ def generate_kernel_with_feedback(trial_history, quantiles, error_message=None):
         base_prompt += (f"\nThe previous kernel produced "
                         f"the following error: '{error_message}'. "
                         f"Please update the kernel."
-                        f"We wish to minimise this error. Check your history so-far"
+                        f"We wish to maximise the marginal. Check your history so-far"
                         f"of trials and let us devise better "
                         f"kernel and also hyperparameters."
-                        f"Your function has a lot of jumps and it is discrete. Standard GP "
-                        f"kernels do not work that well. We need to do something better. "
-                        f"Standard kernels won't help you. You need to think outside the box"
+                        f"From your history see which kernel lead to the best validation loss"
+                        f"Try to explore a bit with combinations of kernels."
+                        f"But if you get high validation losses get back to the best kernel you had"
+                        f"so far."
+                        f"Your function is periodic. Standard GP "
+                        f"kernels work ok."
                         f"Whatever you do remember that the kernel is positive definite"
                         f"We can't have a kernel that is not like that"
                         f"Return only the code!"
                         f" No explanations or comments. Just Python code!")
 
     response = openai.ChatCompletion.create(
-        model="gpt-4-turbo",
+        model="gpt-4o",
         messages=[{"role": "user", "content": base_prompt}],
         max_tokens=500,
-        temperature=0.7
+        temperature=1.7
     )
 
     # Extract the generated kernel function code
@@ -107,9 +115,9 @@ def generate_kernel_with_feedback(trial_history, quantiles, error_message=None):
 
     return kernel_code
 
-def plot_reflection_iteration(X_train, y_train, X_test, y_test, y_pred, y_std, mse, iteration):
+def plot_reflection_iteration(X_train, y_train, X_test, y_test, y_pred, y_std, val, iteration):
     """
-    Plot the GP predictions along with standard deviation, test data points, and show MSE for the current iteration.
+    Plot the GP predictions along with standard deviation, test data points, and show Marginal for the current iteration.
 
     Parameters:
         X_train (np.ndarray): Training data features (inputs).
@@ -118,11 +126,11 @@ def plot_reflection_iteration(X_train, y_train, X_test, y_test, y_pred, y_std, m
         y_test (np.ndarray): Test data target values (outputs).
         y_pred (np.ndarray): Mean predictions from GP.
         y_std (np.ndarray): Standard deviation (uncertainty) from GP.
-        mse (float): Mean Squared Error for the current iteration.
+        val (float): Marginal current iteration.
         iteration (int): The current iteration number.
     """
     plt.figure(figsize=(10, 6))
-    plt.title(f"Reflection Iteration {iteration} - MSE: {mse:.5f}")
+    plt.title(f"Reflection Iteration {iteration} - LM: {val:.5f}")
 
     # Plot training data as black dots
     plt.plot(X_train, y_train, 'k.', markersize=10, label="Training data")
@@ -179,7 +187,7 @@ def reflect_and_optimize_kernel(X_train, y_train, X_test, y_test, max_iterations
         print(f"Iteration {i + 1}: Generated Kernel:\n{kernel_code}")
 
         # Step 2: Evaluate the kernel on validation data and get the error and predictions
-        error_message, mse, y_pred_scaled, y_std = evaluate_kernel_on_validation(kernel_code, X_train_scaled, y_train_scaled, X_test_scaled, y_test)
+        error_message, val, y_pred_scaled, y_std = evaluate_kernel_on_validation(kernel_code, X_train_scaled, y_train_scaled, X_test_scaled, y_test)
 
         # Inverse transform the predictions to the original scale
         y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1)).ravel()
@@ -187,11 +195,11 @@ def reflect_and_optimize_kernel(X_train, y_train, X_test, y_test, max_iterations
         # Store the kernel and validation error in trial history
         trial_history.append({
             "kernel_code": kernel_code,
-            "mse": mse
+            "val": val
         })
 
         # Step 3: Plot the results of the current iteration
-        plot_reflection_iteration(X_train, y_train, X_test, y_test, y_pred, y_std, mse, i + 1)
+        plot_reflection_iteration(X_train, y_train, X_test, y_test, y_pred, y_std, val, i + 1)
 
         # If the error message is None, the kernel is good enough
         if error_message is None:
@@ -257,11 +265,11 @@ def piecewise_function_with_jumps(x):
     return y
 if __name__ == "__main__":
     # Generate training and test data using the piecewise function with jumps
-    X_train = np.linspace(0, 100, 100).reshape(-1, 1)  # Features (time steps)
-    y_train = piecewise_function_with_jumps(X_train.ravel())  # Generate the target values using the piecewise function
+    X_train = np.linspace(0, 10, 200).reshape(-1, 1)  # Features (time steps)
+    y_train = np.sin(X_train.ravel()) + 0.02*np.random.rand(X_train.shape[0])  # Generate the target values using the piecewise function
 
-    X_test = np.linspace(0, 150, 100).reshape(-1, 1)  # Test features (time steps)
-    y_test = piecewise_function_with_jumps(X_test.ravel())  # Test target values from the piecewise function
+    X_test = np.linspace(0, 12, 1000).reshape(-1, 1)  # Test features (time steps)
+    y_test = np.sin(X_test.ravel()) + 0.02*np.random.rand(X_test.shape[0])  # Test target values from the piecewise function
     # Optimize the kernel
     optimized_kernel = reflect_and_optimize_kernel(X_train, y_train, X_test, y_test)
     print(f"Final Optimized Kernel:\n{optimized_kernel}")
